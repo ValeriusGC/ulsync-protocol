@@ -1,0 +1,13 @@
+{
+  "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+  "part": "full",
+  "entity_type": "counter_operation",
+  "created_at_ms": 1756100000000,
+  "last_edited_at_ms": 1756100000000,
+  "revision": 1,
+  "source_id": "device-a",
+  "flags": 0,
+  "schema_version": 1,
+  "payload_encoding": "json",
+  "payload": "eyJ0eXBlIjoiaW5jcmVtZW50In0="
+}
