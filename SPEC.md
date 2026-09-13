@@ -1,8 +1,8 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-08-26 10:28:14 +0500  
-**Version:** 1  
+**Updated:** 2026-09-13 18:14:38 +0300  
+**Version:** 2  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
@@ -25,7 +25,7 @@ Each field: JSON type, required on every envelope that carries it, who writes it
 | `created_at_ms` | number (integer) | yes | client | Time the record was created. |
 | `last_edited_at_ms` | number (integer) | yes | client | Time of the last edit. First rank of conflict resolution. At creation equals `created_at_ms`. |
 | `revision` | number (integer) | yes | client | Edit counter. Second rank of conflict resolution. Greater wins. |
-| `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. |
+| `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. Must be unique per installation (§1.4). |
 | `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Bit assignments for deletion and merge are outside this version. |
 | `schema_version` | number (integer) | yes | client | Version of the payload format on the producing client. This version sends `1`. |
 | `payload_encoding` | string | yes | client | Hint to the receiving client about how to decode the payload bytes. This version sends `json`. The server copies the string and does not interpret it. |
@@ -49,6 +49,14 @@ The server takes `sub` after verifying the token against a JSON Web Key Set (JWK
 `server_seq` is present only in pull responses and in live `envelope` events. A push request must not rely on it. If a client sends it on push, the server ignores it.
 
 The field is omitted from the push response as well. The client's cursor moves only from pull results, never from push results. Returning the number from push would make it possible to set the cursor forward and skip envelopes the client has not seen.
+
+### 1.4. A unique `source_id` per installation
+
+`source_id` is the third rank of §2 and the only tiebreaker when two envelopes carry the same `last_edited_at_ms` and the same `revision`. An installation is one installed copy of a client: one device, one app install. Two installations that report the same `source_id` turn such a pair into a genuine tie: no receiver can break it, each side keeps its own copy, the push of the other side is answered `applied: false` (§7), and two different payloads under one `(id, part)` stay different forever. Every other way two copies of the same user's store can diverge is detectable and repairable; this one is not.
+
+A client therefore **must** create `source_id` once per installation and **must not** let it reach another device. The two ways it travels are a restored device backup and a cloned virtual machine image; keeping the value out of platform backups is the client's job. A `source_id` that changes between launches is wrong for a different reason: every edit then looks like it came from a fresh installation, and the tiebreaker stops being stable.
+
+This is a client duty. The server compares the string and cannot tell two installations that share a value apart.
 
 ## 2. Conflict resolution
 
@@ -122,6 +130,64 @@ No token. No secrets in the body.
 
 This is a liveness check for process supervisors, not an operations panel.
 
+### 3.4. `POST /v1/sync/diff`
+
+Divergence check: the client reports the version it holds for a batch of records, and the server answers which of them it does not hold at all and which it holds in a version that **loses** to the client's by the conflict rule of §2. It is not a pull: no envelopes, no `payload`, no `server_seq` are returned, and nothing is written.
+
+Request:
+
+```json
+{"items":[{"id":"<id>","part":"full","last_edited_at_ms":1756100000000,
+           "revision":3,"source_id":"<installation>"}]}
+```
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | Record identity, as in §1.1 |
+| `part` | string | yes | Slice, as in §1.1. Identity is `(id, part)` |
+| `last_edited_at_ms` | number (integer) | yes | First rank of §2, as the **client** holds it |
+| `revision` | number (integer) | yes | Second rank of §2, as the **client** holds it |
+| `source_id` | string | yes | Third rank of §2, as the **client** holds it. Must be non-empty |
+
+`items` is required and must be a JSON array of those objects. The three ranks are sent together because §2 ranks by all three, in order. A request that carries only some of them cannot be answered without guessing the rest.
+
+`entity_type` is **not** part of this request. Identity of a stored row is `(id, part)` (§1.1); the server keeps no list of types and cannot use one to match rows. A client that stores several types under one `id` cannot be answered by any endpoint, and this one is not an exception.
+
+Response:
+
+```json
+{"missing":[{"id":"<id>","part":"full"}],
+ "stale":[{"id":"<id>","part":"full","last_edited_at_ms":1756000000000,
+           "revision":1,"source_id":"<other installation>"}]}
+```
+
+- `missing` — the server holds no row for this `(id, part)` and this user.
+- `stale` — the server holds a row that **loses** to the one in the request by §2. The three rank fields in a `stale` entry are the **server's** values, present so a human reading the response can see how far behind it is.
+- A row that wins, or ties on all three ranks, appears in neither list. A tie means the two versions are equivalent by §2 (§7), so there is nothing for the client to do.
+- Both arrays are always present. Nothing to report is `{"missing":[],"stale":[]}`, not an omitted field and not `null`.
+- Entries appear in the order of first appearance in the request. A key repeated in the request is answered once; comparison uses the ranks from the first occurrence.
+
+Both lists mean the same thing to the client: mark the record for sending and push it. The push upsert still decides by §2, so this endpoint cannot be used to overwrite a newer row on the server.
+
+The question this endpoint answers is whether the client's copy would win if sent. A weaker comparison leaves holes that live forever, and two of them are ordinary rather than exotic. First: equal `revision`, the client's `last_edited_at_ms` greater. A revision-only check reports nothing, yet the client's copy is the winner and is not queued for sending. Second: the client's `revision` lower **and** its `last_edited_at_ms` greater — a revision-only check reads this as the server being ahead, while §2 says the client wins. Revision counters of two installations are unrelated numbers, so the second case needs no unusual timing at all. In both, a pull cannot repair the divergence: an envelope that loses is skipped, and the local copy is not marked for sending.
+
+Ranking here is **the same rule as §2, not a second one**. The server implements the comparison once and calls it from both the upsert and this endpoint (§3.1, §2). Two copies of the rule drift apart; one function called twice cannot.
+
+| Condition | Code |
+|---|---|
+| `items` empty | `400` |
+| `items` longer than 500 | `413` |
+| `id`, `part`, or `source_id` missing or empty | `400` |
+| `last_edited_at_ms` or `revision` not an integer, or negative | `400` |
+| Body larger than 1 MiB | `413` |
+| Missing, expired, or badly signed token, missing or empty `sub` | `401` |
+
+500 matches the maximum `limit` on pull (§3.2), so a client has one batch size for the whole protocol. One request item is about 120 bytes, so a full batch is about 60 KiB against the 1 MiB body limit.
+
+The user comes from the verified token, never from the body, exactly as in §3.1 and §3.2. A key belonging to another user is reported as `missing`, because for this user it does not exist.
+
+[fixtures/diff/request.json](fixtures/diff/request.json) is a four-item request: a three-rank tie, a key the server does not hold, a stale row that loses on `last_edited_at_ms` at equal `revision`, and a stale row that loses on `last_edited_at_ms` despite a greater `revision`. [fixtures/diff/response_gaps.json](fixtures/diff/response_gaps.json) is the matching response. [fixtures/diff/request_tie.json](fixtures/diff/request_tie.json) is a one-item tie; the expected body is [fixtures/diff/response_empty.json](fixtures/diff/response_empty.json).
+
 ## 4. Live feed
 
 Server-Sent Events (SSE) is a one-way HTTP stream: the server writes, the client reads. The content type is `text/event-stream`. In a browser the receiver is `EventSource`.
@@ -168,6 +234,9 @@ Long polling (`live=poll`) is the fallback where a stream cannot pass: the serve
 | Request body larger than 1 MiB (1,048,576 bytes) | `413` |
 | Push with more than one envelope | `413` |
 | Push with zero envelopes | `400` |
+| Diff with an empty `items` array | `400` |
+| Diff with more than 500 items | `413` |
+| Diff with an item missing `source_id`, or with a non-integer or negative rank | `400` |
 | Missing, expired, or badly signed token | `401` |
 | Missing or empty `sub` | `401` |
 
@@ -180,6 +249,8 @@ Gaps in `server_seq` are legal. A client must not treat them as an error. The pe
 Unknown JSON fields are ignored by both sides. Adding a field later must not break a v1 reader.
 
 An unknown `schema_version` is stored as sent and is not interpreted by the server. The receiving client chooses a codec, or waits until it has one. The server has no opinion about payload versions.
+
+A server that does not implement §3.4 answers `404` (or `405`). A client **must** treat that as "divergence check unavailable" and continue working; the check is an additional safety net, not a precondition for sync.
 
 ## 7. `applied: false` is not an error
 

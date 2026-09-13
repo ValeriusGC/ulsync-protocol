@@ -1,11 +1,11 @@
 # ulsync-protocol
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-08-26 10:26:24 +0500  
-**Version:** 1  
+**Updated:** 2026-09-13 18:14:38 +0300  
+**Version:** 2  
 **Document type:** instruction
 
-Wire contract for ulsync: the envelope JSON, the three sync HTTP endpoints, and the golden examples both implementations must accept.
+Wire contract for ulsync: the envelope JSON, the sync HTTP endpoints, and the golden examples both implementations must accept.
 
 This repository holds text and examples. It is not a library. A Go server and a Dart package read the same files and must agree without talking to each other. Putting the specification inside the server repository would make the server correct by definition, and a mismatch would look like an opinion instead of a defect.
 
@@ -33,6 +33,7 @@ SPEC.md                 wire format and endpoints
 fixtures/envelope/      one envelope, including a non-UTF-8 payload
 fixtures/push/          one request and two responses
 fixtures/pull/          a page and an empty page
+fixtures/diff/          four-outcome request, matching gaps, empty lists, one-item tie
 fixtures/live/stream.txt recorded Server-Sent Events body
 docs/OPEN_QUESTIONS.md  findings that do not belong in the current change
 ```

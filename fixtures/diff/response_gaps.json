@@ -1,0 +1,24 @@
+{
+  "missing": [
+    {
+      "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      "part": "full"
+    }
+  ],
+  "stale": [
+    {
+      "id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+      "part": "full",
+      "last_edited_at_ms": 1756000000000,
+      "revision": 3,
+      "source_id": "device-b"
+    },
+    {
+      "id": "2c7ae6a0-1f3b-4c8e-9d2a-6f4b8c1e0a73",
+      "part": "full",
+      "last_edited_at_ms": 1756000000000,
+      "revision": 5,
+      "source_id": "device-b"
+    }
+  ]
+}
