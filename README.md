@@ -33,6 +33,7 @@ SPEC.md                 wire format and endpoints
 fixtures/envelope/      one envelope, including a non-UTF-8 payload
 fixtures/push/          one request and two responses
 fixtures/pull/          a page and an empty page
+fixtures/diff/          four-outcome request, matching gaps, empty lists, one-item tie
 fixtures/live/stream.txt recorded Server-Sent Events body
 docs/OPEN_QUESTIONS.md  findings that do not belong in the current change
 ```
