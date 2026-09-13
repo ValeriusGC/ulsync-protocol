@@ -1,8 +1,8 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-08-26 10:28:14 +0500  
-**Version:** 1  
+**Updated:** 2026-09-13 18:14:38 +0300  
+**Version:** 2  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
@@ -25,7 +25,7 @@ Each field: JSON type, required on every envelope that carries it, who writes it
 | `created_at_ms` | number (integer) | yes | client | Time the record was created. |
 | `last_edited_at_ms` | number (integer) | yes | client | Time of the last edit. First rank of conflict resolution. At creation equals `created_at_ms`. |
 | `revision` | number (integer) | yes | client | Edit counter. Second rank of conflict resolution. Greater wins. |
-| `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. |
+| `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. Must be unique per installation (§1.4). |
 | `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Bit assignments for deletion and merge are outside this version. |
 | `schema_version` | number (integer) | yes | client | Version of the payload format on the producing client. This version sends `1`. |
 | `payload_encoding` | string | yes | client | Hint to the receiving client about how to decode the payload bytes. This version sends `json`. The server copies the string and does not interpret it. |
@@ -49,6 +49,14 @@ The server takes `sub` after verifying the token against a JSON Web Key Set (JWK
 `server_seq` is present only in pull responses and in live `envelope` events. A push request must not rely on it. If a client sends it on push, the server ignores it.
 
 The field is omitted from the push response as well. The client's cursor moves only from pull results, never from push results. Returning the number from push would make it possible to set the cursor forward and skip envelopes the client has not seen.
+
+### 1.4. A unique `source_id` per installation
+
+`source_id` is the third rank of §2 and the only tiebreaker when two envelopes carry the same `last_edited_at_ms` and the same `revision`. An installation is one installed copy of a client: one device, one app install. Two installations that report the same `source_id` turn such a pair into a genuine tie: no receiver can break it, each side keeps its own copy, the push of the other side is answered `applied: false` (§7), and two different payloads under one `(id, part)` stay different forever. Every other way two copies of the same user's store can diverge is detectable and repairable; this one is not.
+
+A client therefore **must** create `source_id` once per installation and **must not** let it reach another device. The two ways it travels are a restored device backup and a cloned virtual machine image; keeping the value out of platform backups is the client's job. A `source_id` that changes between launches is wrong for a different reason: every edit then looks like it came from a fresh installation, and the tiebreaker stops being stable.
+
+This is a client duty. The server compares the string and cannot tell two installations that share a value apart.
 
 ## 2. Conflict resolution
 
