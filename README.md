@@ -1,8 +1,8 @@
 # ulsync-protocol
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-13 18:14:38 +0300  
-**Version:** 2  
+**Updated:** 2026-09-15 12:34:56 +0300  
+**Version:** 3  
 **Document type:** instruction
 
 Wire contract for ulsync: the envelope JSON, the sync HTTP endpoints, and the golden examples both implementations must accept.
@@ -34,6 +34,7 @@ fixtures/envelope/      one envelope, including a non-UTF-8 payload
 fixtures/push/          one request and two responses
 fixtures/pull/          a page and an empty page
 fixtures/diff/          four-outcome request, matching gaps, empty lists, one-item tie
+fixtures/origin/        hello 200, mismatch 409, and origin 400 bodies
 fixtures/live/stream.txt recorded Server-Sent Events body
 docs/OPEN_QUESTIONS.md  findings that do not belong in the current change
 ```

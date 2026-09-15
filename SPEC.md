@@ -1,8 +1,8 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-13 18:14:38 +0300  
-**Version:** 2  
+**Updated:** 2026-09-15 12:34:56 +0300  
+**Version:** 3  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
@@ -58,6 +58,32 @@ A client therefore **must** create `source_id` once per installation and **must 
 
 This is a client duty. The server compares the string and cannot tell two installations that share a value apart.
 
+### 1.5. Origin of a store
+
+`origin` is a non-empty string that names the **application contour** this store belongs to: one deployment of one application (production, staging, or a private server). It is not a URL, not a user id, and not `source_id`. Envelope identity remains `(id, part)` for a given user (§1.1). The server never reads `origin` from `payload`, from `entity_type`, or from the JWT `iss` (issuer) claim.
+
+The client mints `origin` **once per application contour**, typically the reverse-DNS name of the application plus a project UUID (Universally Unique Identifier), stores it in source control next to the server URL, and sends the same value from every installation of that contour. An `origin` minted per device is a protocol violation: the second installation would be refused forever.
+
+Two stores that report the same `origin` are, for this protocol, one store. Two contours of one application **must** use two values; sharing one value across production and staging is a configuration error, not a protocol hole.
+
+The store is in one of two modes. The words are part of the contract.
+
+An **open** store has no origin in its configuration. The first well-formed `Ulsync-Origin` on `GET /v1/sync/hello` is recorded and becomes the store origin. That first write is **imprint**: it is store metadata, not an envelope and not a `server_seq`. Mail endpoints (`POST /v1/sync/push`, `GET /v1/sync/pull`, `POST /v1/sync/diff`, and the live feed of §4) never imprint. A well-formed header against an as-yet-unimprinted open store on those four is `400` with `{"error":"origin_required"}`: hello must run first. A missing header on those four is honoured (a **legacy client**) and leaves the store unimprinted.
+
+An **authored** store has the origin in its configuration before any client talks to it. The store is named even while the envelope table is empty. A different value or a missing header is refused.
+
+#### Header `Ulsync-Origin`
+
+Every `/v1/sync/*` request from a current client carries this header. It is not the CORS (Cross-Origin Resource Sharing) header `Origin`, and it does not replace `Authorization`.
+
+| Header | Required | Meaning |
+|---|---|---|
+| `Ulsync-Origin` | On an authored store: yes. On an open store: no for a legacy client, yes for a current client | The client's origin. Characters: `A–Z`, `a–z`, `0–9`, `.`, `_`, `/`, `-`. Length 1–256 |
+
+A present header that is empty is treated as missing (`origin_required` where a missing header is an error). A present header that is longer than 256 characters, or that contains a character outside the class, is `origin_invalid`.
+
+`GET /health` does not use this header.
+
 ## 2. Conflict resolution
 
 When two envelopes share `(id, part)` for the same user, one wins. Comparison uses three ranks, in order:
@@ -77,6 +103,8 @@ The per-user sequence is incremented before the upsert decides. A rejected envel
 ## 3. Endpoints
 
 Sync endpoints, except `GET /health`, require `Authorization: Bearer <token>`. The server verifies the signature (JWKS, or a development shared secret when explicitly configured) and reads `sub`. Missing, expired, or badly signed tokens, and a missing or empty `sub`, produce `401`.
+
+The `Ulsync-Origin` header (§1.5) is compared on every `/v1/sync/*` route after the token is accepted. Codes for a missing, invalid, or mismatched value are in §3.5. `GET /health` does not carry the header.
 
 Request and response bodies on the JSON endpoints are `Content-Type: application/json`.
 
@@ -188,6 +216,42 @@ The user comes from the verified token, never from the body, exactly as in §3.1
 
 [fixtures/diff/request.json](fixtures/diff/request.json) is a four-item request: a three-rank tie, a key the server does not hold, a stale row that loses on `last_edited_at_ms` at equal `revision`, and a stale row that loses on `last_edited_at_ms` despite a greater `revision`. [fixtures/diff/response_gaps.json](fixtures/diff/response_gaps.json) is the matching response. [fixtures/diff/request_tie.json](fixtures/diff/request_tie.json) is a one-item tie; the expected body is [fixtures/diff/response_empty.json](fixtures/diff/response_empty.json).
 
+### 3.5. `GET /v1/sync/hello`
+
+Handshake: the client names its origin, the server records it on an open store that has no origin yet or compares it with the origin the store already holds, and nothing about envelopes is read or written.
+
+The request has no body. `Ulsync-Origin` is as in §1.5. A missing, expired, or badly signed token, and a missing or empty `sub`, produce `401` as in §3.1.
+
+Response `200`:
+
+```json
+{"origin":"com.example.app/7c3e9a12-4b56-4d8e-9f01-2a3b4c5d6e7f","user_id":"<sub>"}
+```
+
+`origin` is the value the store holds **after** this request (after imprint it equals the header). `user_id` is the `sub` of the verified token, so the client can confirm it is not talking to another account on the same store.
+
+| Condition | Code | Body |
+|---|---|---|
+| Authored or already imprinted store, header present and equal | `200` | as above |
+| Open store, header present, store has no origin yet | `200` and the store is imprinted | as above |
+| Header present, well-formed, and different from the store origin | `409` | `{"error":"origin_mismatch","store_origin":"<store>","request_origin":"<header>"}` |
+| Hello, header missing or empty (open or authored) | `400` | `{"error":"origin_required"}` |
+| Header present but not matching the character class or longer than 256 | `400` | `{"error":"origin_invalid"}` |
+| Missing, expired, or badly signed token | `401` | as in §3.1 |
+
+Hello **may** write one row of store metadata on an open store. It **must not** insert, update, or delete an envelope, and **must not** allocate `server_seq`.
+
+The same comparison and the same mismatch, invalid, and auth codes apply to `POST /v1/sync/push`, `GET /v1/sync/pull`, `POST /v1/sync/diff`, and the live feed of §4. Live in this list is that feed (`GET /v1/sync/pull` with `live=sse`); this version has no separate `GET /v1/sync/live` path. Those four must not imprint. Extra rules for them:
+
+- open store, header absent — the request proceeds (legacy client); the store stays as it was;
+- open store, not yet imprinted, header present — `400` `origin_required` (hello first);
+- authored store, header absent — `400` `origin_required`;
+- any store, header present and different from the stored origin — `409`.
+
+There is no second, weaker check. A present header that mismatches is `409` on every `/v1/sync/*` route.
+
+[fixtures/origin/hello_response.json](fixtures/origin/hello_response.json) is a `200` body. [fixtures/origin/mismatch.json](fixtures/origin/mismatch.json) is a `409` body. [fixtures/origin/origin_required.json](fixtures/origin/origin_required.json) and [fixtures/origin/origin_invalid.json](fixtures/origin/origin_invalid.json) are the two `400` bodies.
+
 ## 4. Live feed
 
 Server-Sent Events (SSE) is a one-way HTTP stream: the server writes, the client reads. The content type is `text/event-stream`. In a browser the receiver is `EventSource`.
@@ -218,7 +282,7 @@ data: {"next_cursor":1}
 
 Blank lines between events are significant. [fixtures/live/stream.txt](fixtures/live/stream.txt) is a recorded body: one `envelope`, one `cursor`, one `: ping`, with those separators.
 
-The token is checked when the stream opens. The server does not close the stream when the token's `exp` elapses. Reopening with a fresh token is the client's job.
+The token is checked when the stream opens. `Ulsync-Origin` is compared then too (§3.5). The server does not close the stream when the token's `exp` elapses. Reopening with a fresh token is the client's job.
 
 Long polling (`live=poll`) is the fallback where a stream cannot pass: the server holds the request until an envelope is ready or 55 seconds elapse, then returns the JSON of §3.2. 55 seconds sits under the common 60-second idle limit of reverse proxies.
 
@@ -239,6 +303,11 @@ Long polling (`live=poll`) is the fallback where a stream cannot pass: the serve
 | Diff with an item missing `source_id`, or with a non-integer or negative rank | `400` |
 | Missing, expired, or badly signed token | `401` |
 | Missing or empty `sub` | `401` |
+| `Ulsync-Origin` present but not in the character class, or longer than 256, on hello or any `/v1/sync/*` | `400` |
+| `Ulsync-Origin` well-formed and different from the store origin | `409` |
+| Authored store, `Ulsync-Origin` missing or empty | `400` |
+| Open store, not yet imprinted, `Ulsync-Origin` present on push, pull, diff, or live | `400` |
+| Hello, `Ulsync-Origin` missing or empty | `400` |
 
 `401` responses on `/v1/*` do not explain which check failed.
 
@@ -251,6 +320,10 @@ Unknown JSON fields are ignored by both sides. Adding a field later must not bre
 An unknown `schema_version` is stored as sent and is not interpreted by the server. The receiving client chooses a codec, or waits until it has one. The server has no opinion about payload versions.
 
 A server that does not implement §3.4 answers `404` (or `405`). A client **must** treat that as "divergence check unavailable" and continue working; the check is an additional safety net, not a precondition for sync.
+
+A server that does not implement §3.5 answers `404` (or `405`) to `GET /v1/sync/hello`. A client **must** treat that as "origin handshake unavailable" and continue; an old server cannot refuse a foreign application. A current client talking to a current server **must** call hello before the first push, pull, diff, or live of that client instance.
+
+A current server in **open** mode that receives a `/v1/sync/*` request other than hello **without** `Ulsync-Origin` **must** honour it: that is a legacy client, and old clients with a new server are required to work. A current server in **authored** mode **must not**: missing origin is `400`. This is the only compatibility exception the operator opts into by setting `origin` in configuration.
 
 ## 7. `applied: false` is not an error
 
@@ -291,3 +364,7 @@ Editing configuration through this surface is outside this version.
 | base64url | RFC 4648 section 5 alphabet (`-` `_`), usually unpadded. **Not** used for `payload`. |
 | JWT | JSON Web Token: the signed access token in `Authorization: Bearer`. |
 | `sub` | Subject claim inside the JWT; the user identifier the server uses as owner. |
+| origin | Non-empty string naming the application contour this store belongs to. Sent as `Ulsync-Origin`. Not a URL, not a user id, not `source_id`. |
+| open store | A store with no origin in configuration. The first well-formed hello header imprints it. |
+| authored store | A store whose origin was set in configuration before any client. A missing or different header is refused even when no envelopes exist. |
+| imprint | The first write of origin into store metadata on an open store. Only hello does this; mail endpoints never imprint. |
