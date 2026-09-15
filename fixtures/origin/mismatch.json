@@ -1,0 +1,5 @@
+{
+  "error": "origin_mismatch",
+  "store_origin": "com.example.app/7c3e9a12-4b56-4d8e-9f01-2a3b4c5d6e7f",
+  "request_origin": "com.example.other/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+}
