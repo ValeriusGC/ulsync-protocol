@@ -1,13 +1,13 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-15 12:34:56 +0300  
-**Version:** 3  
+**Updated:** 2026-09-16 19:53:33 +0300  
+**Version:** 4  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
 
-v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. Batches of several envelopes in one push, tombstones, `part` values other than `full`, payload compression, and WebSocket are outside this version.
+v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. This version describes `part` values other than `full`. Batches of several envelopes in one push, payload compression, and WebSocket remain outside this version.
 
 ## 1. Envelope
 
@@ -20,13 +20,13 @@ Each field: JSON type, required on every envelope that carries it, who writes it
 | Field | Type | Required | Written by | Meaning |
 |---|---|---|---|---|
 | `id` | string | yes | client | Identity of the record. Stable across devices. |
-| `part` | string | yes | client | Which slice of the record this envelope holds. Identity is `(id, part)`. The only value used in this version is `full`. |
+| `part` | string | yes | client | Which slice of the record this envelope holds. Identity is `(id, part)`. `full` is the complete snapshot of the record. Any other non-empty string is an application-defined slice: the server does not interpret the string and keeps no registry of names. Application examples such as `done` or `deleted` are not reserved protocol values. There is no tombstone type. Last-write-wins (§2) compares inside one `(id, part)` pair and does not cross to a neighbouring name. |
 | `entity_type` | string | yes | client | Codec key for the receiving client. The server does not validate it and keeps no list of types. |
 | `created_at_ms` | number (integer) | yes | client | Time the record was created. |
 | `last_edited_at_ms` | number (integer) | yes | client | Time of the last edit. First rank of conflict resolution. At creation equals `created_at_ms`. |
 | `revision` | number (integer) | yes | client | Edit counter. Second rank of conflict resolution. Greater wins. |
 | `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. Must be unique per installation (§1.4). |
-| `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Bit assignments for deletion and merge are outside this version. |
+| `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Hiding a record is not a bit in this field: it is an application-defined part. There is no tombstone type. |
 | `schema_version` | number (integer) | yes | client | Version of the payload format on the producing client. This version sends `1`. |
 | `payload_encoding` | string | yes | client | Hint to the receiving client about how to decode the payload bytes. This version sends `json`. The server copies the string and does not interpret it. |
 | `payload` | string | yes | client | Payload bytes, encoded as base64. |
