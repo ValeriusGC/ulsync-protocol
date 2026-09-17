@@ -1,13 +1,13 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-15 12:34:56 +0300  
-**Version:** 3  
+**Updated:** 2026-09-16 19:53:33 +0300  
+**Version:** 4  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
 
-v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. Batches of several envelopes in one push, tombstones, `part` values other than `full`, payload compression, and WebSocket are outside this version.
+v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. This version describes a push of 1…500 envelopes in one request and `part` values other than `full`. Payload compression and WebSocket remain outside this version.
 
 ## 1. Envelope
 
@@ -20,13 +20,13 @@ Each field: JSON type, required on every envelope that carries it, who writes it
 | Field | Type | Required | Written by | Meaning |
 |---|---|---|---|---|
 | `id` | string | yes | client | Identity of the record. Stable across devices. |
-| `part` | string | yes | client | Which slice of the record this envelope holds. Identity is `(id, part)`. The only value used in this version is `full`. |
+| `part` | string | yes | client | Which slice of the record this envelope holds. Identity is `(id, part)`. `full` is the complete snapshot of the record. Any other non-empty string is an application-defined slice: the server does not interpret the string and keeps no registry of names. Application examples such as `done` or `deleted` are not reserved protocol values. There is no tombstone type. Last-write-wins (§2) compares inside one `(id, part)` pair and does not cross to a neighbouring name. |
 | `entity_type` | string | yes | client | Codec key for the receiving client. The server does not validate it and keeps no list of types. |
 | `created_at_ms` | number (integer) | yes | client | Time the record was created. |
 | `last_edited_at_ms` | number (integer) | yes | client | Time of the last edit. First rank of conflict resolution. At creation equals `created_at_ms`. |
 | `revision` | number (integer) | yes | client | Edit counter. Second rank of conflict resolution. Greater wins. |
 | `source_id` | string | yes | client | Identifier of the producing installation. Third rank of conflict resolution. The server compares it and does not interpret it. Must be non-empty. Must be unique per installation (§1.4). |
-| `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Bit assignments for deletion and merge are outside this version. |
+| `flags` | number (integer) | yes | client | Protocol flags. This version sends `0`. Hiding a record is not a bit in this field: it is an application-defined part. There is no tombstone type. |
 | `schema_version` | number (integer) | yes | client | Version of the payload format on the producing client. This version sends `1`. |
 | `payload_encoding` | string | yes | client | Hint to the receiving client about how to decode the payload bytes. This version sends `json`. The server copies the string and does not interpret it. |
 | `payload` | string | yes | client | Payload bytes, encoded as base64. |
@@ -122,9 +122,19 @@ Response:
 {"results":[{"id":"<id>","part":"<part>","applied":true}]}
 ```
 
-Each result names the envelope and whether the upsert stored it. `server_seq` is physically absent from this response: the cursor moves only from pull (§1.3).
+Each result names the envelope and whether the upsert stored it. `server_seq` is physically absent from this response: the cursor moves only from pull (§1.3). The `results` array is in request order: index *i* is envelope *i*. A mix of `applied: true` and `applied: false` under HTTP `200` is legal: each element is the ordinary outcome of §2 for that `(id, part)`. Last-write-wins does not abort the request.
 
-This version accepts exactly one envelope in `envelopes`. Zero envelopes is `400`. More than one is `413`.
+This version accepts 1…500 envelopes in `envelopes`. 500 matches the maximum `limit` on pull (§3.2) and the maximum `items` on diff (§3.4). Zero envelopes is `400`. More than 500 is `413`; the JSON body includes `limit` (integer), the maximum this server accepts in one push, so the client sees the ceiling. This version's ceiling is 500:
+
+```json
+{"error":"too many envelopes","limit":500}
+```
+
+Two envelopes in one request that share the same `(id, part)` are `400`. Nothing from that request is stored. The client chooses a winner before sending; the server does not pick one inside the array.
+
+The server parses and validates every envelope **before** any write. A malformed forty-seventh element does not leave forty-six rows on the store. After that check passes, one store transaction compares the whole array: either every envelope is compared by §2, or none is. A comparison that loses is `applied: false` on that result. It is not a reason to roll the transaction back.
+
+[fixtures/push/request_single.json](fixtures/push/request_single.json) is one envelope. [fixtures/push/request_batch.json](fixtures/push/request_batch.json) is two envelopes with different `id` values, both `part` `full`; [fixtures/push/response_batch.json](fixtures/push/response_batch.json) is the matching `200` body. [fixtures/push/request_two_parts.json](fixtures/push/request_two_parts.json) is one `id` with `part` `full` then `part` `done`; [fixtures/push/response_two_parts.json](fixtures/push/response_two_parts.json) is the matching `200` body. The name `done` is an application example, not a reserved protocol value; [fixtures/envelope/part_done.json](fixtures/envelope/part_done.json) is that envelope alone.
 
 ### 3.2. `GET /v1/sync/pull`
 
@@ -296,7 +306,8 @@ Long polling (`live=poll`) is the fallback where a stream cannot pass: the serve
 | `since` not an integer ≥ 0 | `400` |
 | `live` set to anything other than `sse` or `poll` | `400` |
 | Request body larger than 1 MiB (1,048,576 bytes) | `413` |
-| Push with more than one envelope | `413` |
+| Push with more than 500 envelopes | `413` |
+| Push with two envelopes that share `(id, part)` | `400` |
 | Push with zero envelopes | `400` |
 | Diff with an empty `items` array | `400` |
 | Diff with more than 500 items | `413` |
@@ -324,6 +335,8 @@ A server that does not implement §3.4 answers `404` (or `405`). A client **must
 A server that does not implement §3.5 answers `404` (or `405`) to `GET /v1/sync/hello`. A client **must** treat that as "origin handshake unavailable" and continue; an old server cannot refuse a foreign application. A current client talking to a current server **must** call hello before the first push, pull, diff, or live of that client instance.
 
 A current server in **open** mode that receives a `/v1/sync/*` request other than hello **without** `Ulsync-Origin` **must** honour it: that is a legacy client, and old clients with a new server are required to work. A current server in **authored** mode **must not**: missing origin is `400`. This is the only compatibility exception the operator opts into by setting `origin` in configuration.
+
+A client that sends one envelope remains valid. Old clients with a new server of this version are required to work. A server that still accepts only one envelope answers `413` to a longer array; a current client **may** treat that as failure of the push and **must not** be specified here as required to split the array. New clients with an old server are not required to work.
 
 ## 7. `applied: false` is not an error
 
