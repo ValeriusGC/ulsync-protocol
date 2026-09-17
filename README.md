@@ -1,8 +1,8 @@
 # ulsync-protocol
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-15 12:34:56 +0300  
-**Version:** 3  
+**Updated:** 2026-09-16 19:53:33 +0300  
+**Version:** 4  
 **Document type:** instruction
 
 Wire contract for ulsync: the envelope JSON, the sync HTTP endpoints, and the golden examples both implementations must accept.
@@ -30,8 +30,8 @@ A contract that cannot be implemented without a legal review will not be adopted
 
 ```
 SPEC.md                 wire format and endpoints
-fixtures/envelope/      one envelope, including a non-UTF-8 payload
-fixtures/push/          one request and two responses
+fixtures/envelope/      one envelope, including a non-UTF-8 payload and a part other than full
+fixtures/push/          single and batch requests; applied, rejected, and batch responses
 fixtures/pull/          a page and an empty page
 fixtures/diff/          four-outcome request, matching gaps, empty lists, one-item tie
 fixtures/origin/        hello 200, mismatch 409, and origin 400 bodies

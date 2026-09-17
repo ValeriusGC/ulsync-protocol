@@ -19,4 +19,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Store origin: the store remembers which application contour it belongs to (`Ulsync-Origin`). An **open** store is imprinted only from `GET /v1/sync/hello`; mail endpoints never write origin.
 - An **authored** store has origin in configuration before any client. A missing or different header is refused even when no envelopes exist. This deliberately breaks the legacy-client exception for that volume.
 - A legacy client that omits `Ulsync-Origin` continues to work against an **open** store. A current client talking to a current server must call hello before the first push, pull, diff, or live of that instance.
+- Push accepts 1…500 envelopes in one request and one store transaction. Zero is `400`. More than 500 is `413` with `limit`. Duplicate `(id, part)` in one request is `400`. Mixed `applied` on `200` is legal.
 - `part` besides `full` is allowed. The server does not interpret the name and keeps no registry of names. There is no tombstone type.
