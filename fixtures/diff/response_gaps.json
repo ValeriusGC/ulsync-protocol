@@ -20,5 +20,6 @@
       "revision": 5,
       "source_id": "device-b"
     }
-  ]
+  ],
+  "server_now_ms": 1756100123456
 }

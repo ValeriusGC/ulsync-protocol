@@ -1,13 +1,13 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-16 19:53:33 +0300  
-**Version:** 4  
+**Updated:** 2026-09-18 19:03:38 +0300  
+**Version:** 5  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
 
-v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. This version describes a push of 1…500 envelopes in one request and `part` values other than `full`. Payload compression and WebSocket remain outside this version.
+v1 describes one envelope, three client endpoints, a live feed, and an operations surface that is not the client protocol. This version describes a push of 1…500 envelopes in one request and `part` values other than `full`. This version additionally describes `server_now_ms` on successful mail JSON responses and on live `cursor`. Payload compression and WebSocket remain outside this version. The envelope and last-write-wins are unchanged.
 
 ## 1. Envelope
 
@@ -108,6 +108,32 @@ The `Ulsync-Origin` header (§1.5) is compared on every `/v1/sync/*` route after
 
 Request and response bodies on the JSON endpoints are `Content-Type: application/json`.
 
+### Server clock (`server_now_ms`)
+
+`server_now_ms` is a JSON number (integer): milliseconds (thousandths of a second) from the Unix epoch 1970-01-01T00:00:00Z in UTC. The **server** writes it. It is the store clock at the moment of this response. It is not process `started_at`, not the HTTP `Date` header, and not envelope `last_edited_at_ms`.
+
+A client uses the value to compute an **offset** (the difference between store time and the device clock) so that outgoing `last_edited_at_ms` after a sample is close to store time. Last-write-wins (§2) still ranks those already-corrected `last_edited_at_ms` values. Completeness of mail is still `server_seq` (§1.3). The store **must not** replace an incoming envelope's `last_edited_at_ms` with `server_now_ms`. The field does not move `server_seq` and is not a conflict rank.
+
+The current server **always** sets `server_now_ms` on the successful (`200`) bodies listed below. A client that does not find the field on a `200` body **must not** treat that as a handshake failure and **must not** answer with its own 4xx: the offset is simply not updated.
+
+Present on HTTP `200`:
+
+- body of `GET /v1/sync/hello` (§3.5);
+- body of `POST /v1/sync/push` (§3.1);
+- body of `GET /v1/sync/pull` (immediate and `live=poll`; the same JSON as §3.2);
+- body of `POST /v1/sync/diff` (§3.4);
+- JSON `data` of the live `event: cursor` (§4).
+
+Absent from:
+
+- envelope JSON, including live `event: envelope`;
+- error bodies (`400`, `401`, `409`, `413`, and the other error codes of §5);
+- the SSE comment `: ping`;
+- `GET /health` (§3.3);
+- `GET /v1/whoami`.
+
+The golden fixtures in this repository freeze one integer, `1756100123456`, as the example. A running server emits the current Unix millisecond clock. Byte-identical equality of a live `200` body against the fixture is not a protocol requirement.
+
 ### 3.1. `POST /v1/sync/push`
 
 Request:
@@ -119,7 +145,7 @@ Request:
 Response:
 
 ```json
-{"results":[{"id":"<id>","part":"<part>","applied":true}]}
+{"results":[{"id":"<id>","part":"<part>","applied":true}],"server_now_ms":1756100123456}
 ```
 
 Each result names the envelope and whether the upsert stored it. `server_seq` is physically absent from this response: the cursor moves only from pull (§1.3). The `results` array is in request order: index *i* is envelope *i*. A mix of `applied: true` and `applied: false` under HTTP `200` is legal: each element is the ordinary outcome of §2 for that `(id, part)`. Last-write-wins does not abort the request.
@@ -151,7 +177,7 @@ Query:
 Immediate and long-poll responses:
 
 ```json
-{"envelopes":[<envelope with server_seq>, …],"next_cursor":<integer>}
+{"envelopes":[<envelope with server_seq>, …],"next_cursor":<integer>,"server_now_ms":1756100123456}
 ```
 
 Envelopes are ordered by `server_seq` ascending. `next_cursor` is the `server_seq` of the last envelope in the page. If the page is empty, `next_cursor` equals the request `since`.
@@ -196,13 +222,14 @@ Response:
 ```json
 {"missing":[{"id":"<id>","part":"full"}],
  "stale":[{"id":"<id>","part":"full","last_edited_at_ms":1756000000000,
-           "revision":1,"source_id":"<other installation>"}]}
+           "revision":1,"source_id":"<other installation>"}],
+ "server_now_ms":1756100123456}
 ```
 
 - `missing` — the server holds no row for this `(id, part)` and this user.
 - `stale` — the server holds a row that **loses** to the one in the request by §2. The three rank fields in a `stale` entry are the **server's** values, present so a human reading the response can see how far behind it is.
 - A row that wins, or ties on all three ranks, appears in neither list. A tie means the two versions are equivalent by §2 (§7), so there is nothing for the client to do.
-- Both arrays are always present. Nothing to report is `{"missing":[],"stale":[]}`, not an omitted field and not `null`.
+- Both arrays are always present. Nothing to report is `{"missing":[],"stale":[],"server_now_ms":1756100123456}`, not an omitted field and not `null`.
 - Entries appear in the order of first appearance in the request. A key repeated in the request is answered once; comparison uses the ranks from the first occurrence.
 
 Both lists mean the same thing to the client: mark the record for sending and push it. The push upsert still decides by §2, so this endpoint cannot be used to overwrite a newer row on the server.
@@ -235,7 +262,7 @@ The request has no body. `Ulsync-Origin` is as in §1.5. A missing, expired, or 
 Response `200`:
 
 ```json
-{"origin":"com.example.app/7c3e9a12-4b56-4d8e-9f01-2a3b4c5d6e7f","user_id":"<sub>"}
+{"origin":"com.example.app/7c3e9a12-4b56-4d8e-9f01-2a3b4c5d6e7f","user_id":"<sub>","server_now_ms":1756100123456}
 ```
 
 `origin` is the value the store holds **after** this request (after imprint it equals the header). `user_id` is the `sub` of the verified token, so the client can confirm it is not talking to another account on the same store.
@@ -283,12 +310,12 @@ event: envelope
 data: {"id":"…","part":"full",…,"server_seq":1}
 
 event: cursor
-data: {"next_cursor":1}
+data: {"next_cursor":1,"server_now_ms":1756100123456}
 
 : ping
 ```
 
-`envelope` carries one envelope including `server_seq`, the same object as in a pull page. `cursor` follows a burst of envelopes and reports `next_cursor` as in §3.2. `: ping` is an SSE comment (a line that begins with `:`). It is heartbeat: a write every 15 seconds so a mobile carrier NAT (network address translation) does not drop a silent connection. Comments are not delivered to the client application; they only keep the connection alive.
+`envelope` carries one envelope including `server_seq`, the same object as in a pull page. `cursor` follows a burst of envelopes and reports `next_cursor` as in §3.2 and `server_now_ms` as in the server-clock section of §3. `: ping` is an SSE comment (a line that begins with `:`). It does not carry `server_now_ms`. It is heartbeat: a write every 15 seconds so a mobile carrier NAT (network address translation) does not drop a silent connection. Comments are not delivered to the client application; they only keep the connection alive.
 
 Blank lines between events are significant. [fixtures/live/stream.txt](fixtures/live/stream.txt) is a recorded body: one `envelope`, one `cursor`, one `: ping`, with those separators.
 

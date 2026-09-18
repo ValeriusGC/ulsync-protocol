@@ -15,5 +15,6 @@
       "server_seq": 1
     }
   ],
-  "next_cursor": 1
+  "next_cursor": 1,
+  "server_now_ms": 1756100123456
 }
