@@ -1,8 +1,8 @@
 # ulsync-protocol
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-16 19:53:33 +0300  
-**Version:** 4  
+**Updated:** 2026-09-18 19:03:38 +0300  
+**Version:** 5  
 **Document type:** instruction
 
 Wire contract for ulsync: the envelope JSON, the sync HTTP endpoints, and the golden examples both implementations must accept.
@@ -18,7 +18,7 @@ Authors of an ulsync server or client. Anyone else implementing the same wire fo
 1. [SPEC.md](SPEC.md) is the specification. Behaviour not written there is not part of v1.
 2. [fixtures/](fixtures/) are the examples that tests load. They are not illustrations for a human reader.
 
-The Go server and the Dart package add this repository as a git submodule and run their tests against the fixtures. Changing a fixture without changing `SPEC.md` and `CHANGELOG.md` is a defect: one side will pass and the other will fail, and the failure will show up only when both run.
+The Go server and the Dart package add this repository as a git submodule and run their tests against the fixtures. Changing a fixture without changing `SPEC.md` and `CHANGELOG.md` is a defect: one side will pass and the other will fail, and the failure will show up only when both run. Successful mail JSON (`hello`, `push`, `pull`, `diff`) and live `cursor` events carry `server_now_ms`; envelope JSON does not.
 
 ## License
 
