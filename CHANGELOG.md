@@ -1,8 +1,8 @@
 # Changelog
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-18 19:03:38 +0300  
-**Version:** 5  
+**Updated:** 2026-09-18 21:00:10 +0300  
+**Version:** 6  
 **Document type:** changelog
 
 All notable changes to this project are documented in this file.
@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Successful mail JSON (`hello`, `push`, `pull`, `diff`) and live `cursor` events carry `server_now_ms` (server Unix milliseconds). Envelope JSON is unchanged. Last-write-wins ranks are unchanged. A live server's value moves; fixtures freeze `1756100123456` as the example.
+
+### Changed
+
+- The `server_now_ms` section names the origin of the client offset: Cristian 1989 without RTT/2 (NTP θ), Firebase `.info/serverTimeOffset`, Cassandra client-clock last-write-wins as the defect being avoided. Wire behaviour of the field is unchanged.
 - Envelope format, last-write-wins conflict resolution, push / pull / health endpoints, live feed, limits, compatibility rules, and golden fixtures for protocol v1.
 - Divergence-check endpoint `POST /v1/sync/diff`: the client sends version metadata only; the server names keys it does not hold and keys it holds in a losing version. Backwards compatible: an older server answers `404`, and the client keeps working.
 - Requirement that `source_id` is unique per installation (§1.4). This clarifies a client duty; the envelope format is unchanged.

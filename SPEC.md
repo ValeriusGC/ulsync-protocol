@@ -1,8 +1,8 @@
 # ulsync protocol specification v1
 
 **Created:** 2026-08-26 10:26:24 +0500  
-**Updated:** 2026-09-18 19:03:38 +0300  
-**Version:** 5  
+**Updated:** 2026-09-18 21:00:10 +0300  
+**Version:** 6  
 **Document type:** specification
 
 This document is the wire contract. A server written in Go and a package written in Dart, produced independently, must converge on these files. Divergence is a failing test on a fixture, not a first run on two devices.
@@ -113,6 +113,8 @@ Request and response bodies on the JSON endpoints are `Content-Type: application
 `server_now_ms` is a JSON number (integer): milliseconds (thousandths of a second) from the Unix epoch 1970-01-01T00:00:00Z in UTC. The **server** writes it. It is the store clock at the moment of this response. It is not process `started_at`, not the HTTP `Date` header, and not envelope `last_edited_at_ms`.
 
 A client uses the value to compute an **offset** (the difference between store time and the device clock) so that outgoing `last_edited_at_ms` after a sample is close to store time. Last-write-wins (§2) still ranks those already-corrected `last_edited_at_ms` values. Completeness of mail is still `server_seq` (§1.3). The store **must not** replace an incoming envelope's `last_edited_at_ms` with `server_now_ms`. The field does not move `server_seq` and is not a conflict rank.
+
+This offset is not an ulsync invention. It is Flaviu Cristian's 1989 clock sample (store time minus local time) without the RTT/2 term — the same quantity NTP calls θ (RFC 5905 §8). One-way delay is milliseconds; last-write-wins fails on hours of device skew. Firebase Realtime Database publishes the same handshake correction as `.info/serverTimeOffset` and documents it for discrepancies greater than one second. Apache Cassandra last-write-wins timestamps come from a client (or coordinator) clock and require those clocks to be synchronized for correctness; raw device time as the first LWW rank is that defect. Replacing incoming `last_edited_at_ms` with ingest time would be last-pusher-wins and is forbidden. Hybrid logical clocks are a different product.
 
 The current server **always** sets `server_now_ms` on the successful (`200`) bodies listed below. A client that does not find the field on a `200` body **must not** treat that as a handshake failure and **must not** answer with its own 4xx: the offset is simply not updated.
 
